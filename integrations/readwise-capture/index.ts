@@ -124,6 +124,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const bodyText = await req.text();
+    // Deliberate no-op: Readwise's "Test Webhook" sends an empty body during
+    // setup, so return 200 without processing. The secret check below gates
+    // every side effect, so this short-circuit can't be abused.
     if (!bodyText) {
       return new Response("ok (empty body)", { status: 200 });
     }
