@@ -1,5 +1,9 @@
 # Recency-Boosted match_thoughts RPC
 
+![Community Contribution](https://img.shields.io/badge/OB1_COMMUNITY-Approved_Contribution-2ea44f?style=for-the-badge&logo=github)
+
+**Created by [@txcfi-scott](https://github.com/txcfi-scott)**
+
 > Adds `match_thoughts_recency` — a variant of the core `match_thoughts` RPC that blends cosine similarity with an exponential recency decay, without replacing the original function.
 
 ## What It Does
