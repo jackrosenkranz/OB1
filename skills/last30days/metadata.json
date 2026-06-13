@@ -1,0 +1,27 @@
+{
+  "name": "Last 30 Days",
+  "description": "Standalone skill pack that runs a 30-day retrospective of the user's own Open Brain memory: clusters the month's captures into themes, surfaces momentum, stalls, and open loops, diffs against the prior month, and saves a durable retrospective back to Open Brain.",
+  "category": "skills",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": [],
+    "tools": ["Claude Code or similar AI client with reusable skills and Open Brain MCP connected"]
+  },
+  "tags": [
+    "retrospective",
+    "monthly-review",
+    "memory",
+    "digest",
+    "open-loops",
+    "reflection"
+  ],
+  "difficulty": "beginner",
+  "estimated_time": "10 minutes",
+  "created": "2026-06-13",
+  "updated": "2026-06-13"
+}
