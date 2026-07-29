@@ -1,0 +1,21 @@
+{
+  "name": "Unlimited OCR",
+  "description": "OCR any volume of scanned PDFs and images into Open Brain with no page caps and no per-page fees, using a local-first pipeline (embedded text layer, then Tesseract, then an optional hard-capped vision-model fallback) with page-level resume.",
+  "category": "recipes",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": ["OpenRouter"],
+    "tools": ["Python 3.10+", "Tesseract OCR", "Poppler (pdftoppm)"]
+  },
+  "requires_skills": [],
+  "tags": ["ocr", "import", "pdf", "scanned-documents", "tesseract", "archive", "local-first"],
+  "difficulty": "intermediate",
+  "estimated_time": "30 minutes",
+  "created": "2026-07-29",
+  "updated": "2026-07-29"
+}
