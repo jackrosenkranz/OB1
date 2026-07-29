@@ -72,7 +72,44 @@ DEFAULT_CONFIDENCE_THRESHOLD = 70.0
 DEFAULT_DPI = 300
 
 EMBEDDING_MODEL = "openai/text-embedding-3-small"
-DEFAULT_VISION_MODEL = "google/gemini-2.0-flash-001"
+
+# Vision OCR model. The default is the cheapest image-capable model on
+# OpenRouter — a page of scanned text costs a small fraction of a cent, which
+# is what makes "OCR the whole archive" a realistic default rather than a
+# budgeted exception.
+#
+# Prices below are USD per million tokens, read from OpenRouter's public model
+# API in July 2026. They move; check https://openrouter.ai/models before
+# planning a very large run. Cost estimates in this script use these numbers
+# only as a rough guide.
+DEFAULT_VISION_MODEL = "qwen/qwen3.7-flash"
+
+VISION_MODEL_PRICES = {
+    # model id                        (in $/Mtok, out $/Mtok)
+    "qwen/qwen3.7-flash":             (0.030, 0.130),
+    "qwen/qwen3.5-flash-02-23":       (0.065, 0.260),
+    "qwen/qwen3-vl-32b-instruct":     (0.104, 0.416),
+    "qwen/qwen3-vl-8b-instruct":      (0.117, 0.455),
+    "qwen/qwen3-vl-30b-a3b-instruct": (0.130, 0.520),
+    "z-ai/glm-4.6v":                  (0.300, 0.900),
+    "google/gemini-2.5-flash-lite":   (0.100, 0.400),
+}
+
+# Rough per-page token cost of vision OCR at 300 DPI: a rasterized letter page
+# lands around this many image tokens, and a dense page transcribes to roughly
+# this many output tokens. Used only for the --dry-run estimate.
+EST_TOKENS_IN_PER_PAGE = 2000
+EST_TOKENS_OUT_PER_PAGE = 800
+
+
+def estimate_vision_cost(pages: int, model: str) -> float | None:
+    """Estimated USD for OCRing `pages` pages. None if the model is unpriced."""
+    price = VISION_MODEL_PRICES.get(model)
+    if not price:
+        return None
+    p_in, p_out = price
+    per_page = (EST_TOKENS_IN_PER_PAGE * p_in + EST_TOKENS_OUT_PER_PAGE * p_out) / 1e6
+    return pages * per_page
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2  # seconds, doubles each retry
@@ -114,27 +151,33 @@ def scan_for_secrets(text: str) -> str | None:
 # ── Vision budget ────────────────────────────────────────────────────────────
 
 class VisionBudget:
-    """Hard cap on paid vision-OCR pages, safe to share across OCR threads.
+    """Optional cap on paid vision-OCR pages, safe to share across OCR threads.
 
-    Pages are claimed before the API call, so the cap holds even when several
-    worker threads hit low-confidence pages at the same moment.
+    A cap of 0 or less means unlimited, which is the default: at current
+    prices a page costs a fraction of a cent, so capping it by default would
+    silently truncate exactly the archive-sized runs this recipe exists for.
+    Set --max-vision-pages to put a hard ceiling back.
+
+    Pages are claimed before the API call, so a ceiling holds even when
+    several worker threads reach for it at the same moment.
     """
 
     def __init__(self, cap: int):
-        self.cap = cap
+        self.cap = cap if cap and cap > 0 else 0
+        self.unlimited = self.cap == 0
         self.used = 0
         self._lock = threading.Lock()
         self._warned = False
 
     def claim(self) -> bool:
-        """Reserve one vision page. Returns False when the budget is spent."""
+        """Reserve one vision page. Returns False when a ceiling is reached."""
         with self._lock:
-            if self.used >= self.cap:
+            if not self.unlimited and self.used >= self.cap:
                 if not self._warned:
                     self._warned = True
-                    print(f"  Vision budget of {self.cap} page(s) spent — remaining "
-                          f"low-confidence pages keep their Tesseract text. "
-                          f"Raise it with --max-vision-pages.", flush=True)
+                    print(f"  Vision page cap of {self.cap} reached — remaining "
+                          f"pages fall back to local text only. Raise or remove "
+                          f"it with --max-vision-pages.", flush=True)
                 return False
             self.used += 1
             return True
@@ -454,15 +497,59 @@ def content_fingerprint(text: str) -> str:
 
 # ── Page extraction ──────────────────────────────────────────────────────────
 
+def ocr_page_image(image_path: Path, args, openrouter_key: str,
+                   vision_budget: "VisionBudget") -> tuple[str, str, float]:
+    """OCR one rasterized page. Returns (text, method, confidence).
+
+    Which engine runs is decided by --ocr-engine:
+
+      vision     — send straight to the vision model. At current prices this
+                   is the cheapest *accurate* option and needs no local OCR
+                   install, so it is the default.
+      tesseract  — local only, never call the API. Free and offline.
+      hybrid     — Tesseract first, escalate only the pages it read badly.
+                   Cheapest per page, but requires the local install.
+    """
+    engine = args.ocr_engine
+
+    if engine == "vision":
+        if not openrouter_key:
+            return "", "vision-unavailable", 0.0
+        if not vision_budget.claim():
+            return "", "budget-exhausted", 0.0
+        text = clean_ocr_text(vision_ocr(image_path, openrouter_key, args.vision_model))
+        if not text:
+            vision_budget.release()
+            return "", "vision-failed", 0.0
+        return text, "vision", 100.0
+
+    # tesseract and hybrid both start locally
+    text, conf = ocr_image(image_path, args.lang, args.psm)
+    text = clean_ocr_text(text)
+
+    if engine == "tesseract":
+        return text, "tesseract", conf
+
+    # hybrid: escalate only what Tesseract clearly botched
+    needs_help = (conf < args.confidence_threshold
+                  or alpha_ratio(text) < 0.5
+                  or len(text) < args.min_page_chars)
+
+    if needs_help and openrouter_key and vision_budget.claim():
+        v_text = clean_ocr_text(vision_ocr(image_path, openrouter_key, args.vision_model))
+        if not v_text:
+            vision_budget.release()
+        elif len(v_text) > len(text):
+            return v_text, "vision", 100.0
+
+    return text, "tesseract", conf
+
+
 def extract_pdf_page(pdf_path: Path, page_no: int, layer_text: str, work_dir: Path,
                      args, openrouter_key: str, vision_budget: "VisionBudget") -> dict:
     """Extract one PDF page. Returns {page, text, method, confidence}."""
     layer_text = clean_ocr_text(layer_text)
-    if len(layer_text) >= args.text_layer_min_chars:
-        return {"page": page_no, "text": layer_text,
-                "method": "text-layer", "confidence": 100.0}
-
-    if args.text_layer_only:
+    if len(layer_text) >= args.text_layer_min_chars or args.text_layer_only:
         return {"page": page_no, "text": layer_text,
                 "method": "text-layer", "confidence": 100.0}
 
@@ -474,23 +561,7 @@ def extract_pdf_page(pdf_path: Path, page_no: int, layer_text: str, work_dir: Pa
                 "method": "rasterize-failed", "confidence": 0.0}
 
     try:
-        text, conf = ocr_image(image_path, args.lang, args.psm)
-        text = clean_ocr_text(text)
-        method = "tesseract"
-
-        needs_help = (conf < args.confidence_threshold
-                      or alpha_ratio(text) < 0.5
-                      or len(text) < args.min_page_chars)
-
-        if needs_help and args.vision_fallback and openrouter_key and vision_budget.claim():
-            v_text = clean_ocr_text(vision_ocr(image_path, openrouter_key,
-                                               args.vision_model))
-            if v_text:
-                if len(v_text) > len(text):
-                    text, method, conf = v_text, "vision", 100.0
-            else:
-                vision_budget.release()
-
+        text, method, conf = ocr_page_image(image_path, args, openrouter_key, vision_budget)
         return {"page": page_no, "text": text, "method": method, "confidence": conf}
     finally:
         shutil.rmtree(page_dir, ignore_errors=True)
@@ -499,22 +570,7 @@ def extract_pdf_page(pdf_path: Path, page_no: int, layer_text: str, work_dir: Pa
 def extract_image_file(path: Path, args, openrouter_key: str,
                        vision_budget: "VisionBudget") -> dict:
     """Extract text from a standalone image file."""
-    text, conf = ocr_image(path, args.lang, args.psm)
-    text = clean_ocr_text(text)
-    method = "tesseract"
-
-    needs_help = (conf < args.confidence_threshold
-                  or alpha_ratio(text) < 0.5
-                  or len(text) < args.min_page_chars)
-
-    if needs_help and args.vision_fallback and openrouter_key and vision_budget.claim():
-        v_text = clean_ocr_text(vision_ocr(path, openrouter_key, args.vision_model))
-        if v_text:
-            if len(v_text) > len(text):
-                text, method, conf = v_text, "vision", 100.0
-        else:
-            vision_budget.release()
-
+    text, method, conf = ocr_page_image(path, args, openrouter_key, vision_budget)
     return {"page": 1, "text": text, "method": method, "confidence": conf}
 
 
@@ -594,15 +650,22 @@ def main():
                         help="Never rasterize or OCR — import embedded text layers only")
     parser.add_argument("--no-images", action="store_true",
                         help="Skip standalone image files, import PDFs only")
-    parser.add_argument("--vision-fallback", action="store_true",
-                        help="Escalate badly-read pages to a vision model (costs money)")
-    parser.add_argument("--max-vision-pages", type=int, default=25,
-                        help="Hard cap on vision-model pages per run (default: 25)")
+    parser.add_argument("--ocr-engine", choices=["vision", "tesseract", "hybrid"],
+                        default="vision",
+                        help="How pages without a text layer are read. "
+                             "'vision' (default): cheap vision model, no local "
+                             "install needed. 'tesseract': local only, free and "
+                             "offline. 'hybrid': Tesseract first, vision only for "
+                             "pages it read badly.")
+    parser.add_argument("--max-vision-pages", type=int, default=0,
+                        help="Ceiling on vision-model pages per run (0 = unlimited, "
+                             "the default)")
     parser.add_argument("--vision-model", type=str, default=DEFAULT_VISION_MODEL,
                         help=f"OpenRouter vision model (default: {DEFAULT_VISION_MODEL})")
     parser.add_argument("--confidence-threshold", type=float,
                         default=DEFAULT_CONFIDENCE_THRESHOLD,
-                        help="Tesseract confidence below which a page is 'badly read'")
+                        help="Tesseract confidence below which a page is 'badly read' "
+                             "(--ocr-engine hybrid only)")
     parser.add_argument("--no-embed", action="store_true",
                         help="Insert thoughts without embeddings")
     parser.add_argument("--no-secret-scan", action="store_true",
@@ -642,25 +705,37 @@ def main():
             print("Error: OPENROUTER_API_KEY required for embeddings", file=sys.stderr)
             print("Or pass --no-embed to skip embedding generation", file=sys.stderr)
             sys.exit(1)
-    if args.vision_fallback and not openrouter_key:
-        print("Error: --vision-fallback requires OPENROUTER_API_KEY", file=sys.stderr)
+    uses_vision = args.ocr_engine in ("vision", "hybrid") and not args.text_layer_only
+    uses_tesseract = args.ocr_engine in ("tesseract", "hybrid") and not args.text_layer_only
+
+    if uses_vision and not openrouter_key:
+        print(f"Error: --ocr-engine {args.ocr_engine} requires OPENROUTER_API_KEY",
+              file=sys.stderr)
+        print("  Or use --ocr-engine tesseract to OCR locally with no API key.",
+              file=sys.stderr)
         sys.exit(1)
 
     # ── Preflight ────────────────────────────────────────────────────────────
 
-    need_ocr_tools = not args.text_layer_only
-    if need_ocr_tools:
-        missing = [b for b in ("tesseract", "pdftoppm") if not have_binary(b)]
+    # Rasterizing needs Poppler whichever engine reads the pixels; Tesseract is
+    # only needed when an engine actually runs it.
+    if not args.text_layer_only:
+        needed = ["pdftoppm"] + (["tesseract"] if uses_tesseract else [])
+        missing = [b for b in needed if not have_binary(b)]
         if missing:
             print(f"Error: missing required binaries: {', '.join(missing)}",
                   file=sys.stderr)
-            print("  macOS:  brew install tesseract poppler", file=sys.stderr)
-            print("  Ubuntu: sudo apt install tesseract-ocr poppler-utils",
+            print("  macOS:  brew install poppler tesseract", file=sys.stderr)
+            print("  Ubuntu: sudo apt install poppler-utils tesseract-ocr",
                   file=sys.stderr)
+            if "tesseract" in missing:
+                print("  Or use --ocr-engine vision, which needs no local OCR install.",
+                      file=sys.stderr)
             print("  Or run with --text-layer-only to skip OCR entirely.",
                   file=sys.stderr)
             sys.exit(1)
 
+    if uses_tesseract:
         installed = tesseract_languages()
         wanted = set(args.lang.split("+"))
         absent = wanted - installed if installed else set()
@@ -670,6 +745,8 @@ def main():
             print(f"  Installed: {', '.join(sorted(installed)) or '(none detected)'}",
                   file=sys.stderr)
             print("  Ubuntu: sudo apt install tesseract-ocr-<lang>", file=sys.stderr)
+            print("  Or use --ocr-engine vision, which reads most languages "
+                  "without a language pack.", file=sys.stderr)
             sys.exit(1)
 
     if not args.dry_run:
@@ -706,15 +783,18 @@ def main():
     if args.limit and args.limit > 0:
         documents = documents[:args.limit]
 
+    engine_label = "text layer only" if args.text_layer_only else args.ocr_engine
     print(f"Source:   {root}")
     print(f"Mode:     {'DRY RUN' if args.dry_run else 'LIVE IMPORT'}")
+    print(f"Engine:   {engine_label}"
+          + (f" ({args.vision_model})" if uses_vision else ""))
     print(f"Found:    {len(documents)} document(s)\n")
 
     if not documents:
         print("Nothing to do. Check the path and file extensions.")
         return
 
-    vision_budget = VisionBudget(args.max_vision_pages if args.vision_fallback else 0)
+    vision_budget = VisionBudget(args.max_vision_pages)
     stats = {
         "files": 0, "files_skipped": 0, "pages": 0, "pages_skipped": 0,
         "text_layer": 0, "tesseract": 0, "vision": 0, "failed_pages": 0,
@@ -767,6 +847,7 @@ def main():
             print(f"  Would read {len(todo) - needs_ocr} page(s) from the text layer, "
                   f"OCR {needs_ocr} page(s)")
             continue
+
 
         if not todo:
             record.update({"hash": f_hash, "complete": True})
@@ -882,18 +963,42 @@ def main():
     print()
     print("─" * 60)
     if args.dry_run:
+        to_ocr = stats["tesseract"]
         print(f"Files:            {stats['files']}")
         print(f"Pages to process: {stats['pages']}")
         print(f"  From text layer (free):  {stats['text_layer']}")
-        print(f"  Needing OCR (free/local): {stats['tesseract']}")
+        if args.text_layer_only:
+            print(f"  Skipped, no text layer:  {to_ocr}")
+        elif args.ocr_engine == "tesseract":
+            print(f"  Local OCR (free):        {to_ocr}")
+        else:
+            cost = estimate_vision_cost(to_ocr, args.vision_model)
+            if cost is None:
+                print(f"  Vision OCR:              {to_ocr}  "
+                      f"(no price on file for {args.vision_model})")
+            else:
+                print(f"  Vision OCR:              {to_ocr}  "
+                      f"(~${cost:.2f} at {args.vision_model})")
+            if args.ocr_engine == "hybrid":
+                print("    Hybrid: Tesseract reads these first, so the real "
+                      "vision spend is a fraction of the estimate above.")
+        if uses_vision and to_ocr:
+            print("\nEstimates assume ~2k image tokens in and ~800 tokens out "
+                  "per page, priced from OpenRouter in July 2026. Check current "
+                  "prices before a very large run.")
         print("\nRun again without --dry-run to import.")
         return
 
+    cap_note = "unlimited" if vision_budget.unlimited else f"cap {vision_budget.cap}"
     print(f"Files processed:  {stats['files']} ({stats['files_skipped']} skipped)")
     print(f"Pages read:       {stats['pages']}")
     print(f"  Text layer:     {stats['text_layer']}")
     print(f"  Tesseract:      {stats['tesseract']}")
-    print(f"  Vision model:   {stats['vision']} (cap: {vision_budget.cap})")
+    print(f"  Vision model:   {stats['vision']} ({cap_note})")
+    if stats["vision"]:
+        spend = estimate_vision_cost(stats["vision"], args.vision_model)
+        if spend is not None:
+            print(f"  Est. vision cost: ~${spend:.2f}")
     if stats["failed_pages"]:
         print(f"  Failed:         {stats['failed_pages']}")
     print(f"Thoughts inserted: {stats['inserted']}")
