@@ -1,0 +1,21 @@
+{
+  "name": "QA A/B Ledger",
+  "description": "Append-only tables and derived metric views for two-arm QA review panel A/B tests, with hash-sealed seeded-error keys that stay unreachable until every review is recorded.",
+  "category": "schemas",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": ["Supabase Postgres with pgcrypto"],
+    "tools": ["Supabase SQL Editor or psql"]
+  },
+  "requires_primitives": ["rls"],
+  "tags": ["evals", "quality", "audit", "append-only", "calibration", "qa"],
+  "difficulty": "advanced",
+  "estimated_time": "20 minutes",
+  "created": "2026-07-30",
+  "updated": "2026-07-30"
+}
