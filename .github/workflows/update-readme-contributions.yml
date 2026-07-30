@@ -26,6 +26,9 @@ jobs:
       - name: Update README recent contributions
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The repo whose merged PRs the table credits. Set explicitly so the
+          # job reads the same history regardless of which fork it runs in.
+          CONTRIBUTIONS_REPOSITORY: NateBJones-Projects/OB1
         run: node scripts/update-readme-contributions.mjs
 
       - name: Open README update PR
