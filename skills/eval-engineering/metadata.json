@@ -1,0 +1,24 @@
+{
+  "name": "Eval Engineering Skill Pack",
+  "description": "Turns real agent failures into permanent evals, designs an ungameable judge, wires each verdict back into routing decisions, and gates autonomous merges on a confidence score.",
+  "category": "skills",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": [],
+    "tools": [
+      "AI client with reusable skills/prompts",
+      "Access to real agent traces, logs, or transcripts",
+      "Ability to install the bundled references directory"
+    ]
+  },
+  "tags": ["evals", "agents", "llm-as-judge", "observability", "quality", "workflow", "automation"],
+  "difficulty": "advanced",
+  "estimated_time": "20 minutes",
+  "created": "2026-07-30",
+  "updated": "2026-07-30"
+}
