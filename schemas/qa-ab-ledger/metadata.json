@@ -6,16 +6,29 @@
     "name": "Jack Rosenkranz",
     "github": "jackrosenkranz"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "requires": {
     "open_brain": true,
-    "services": ["Supabase Postgres with pgcrypto"],
-    "tools": ["Supabase SQL Editor or psql"]
+    "services": [
+      "Supabase Postgres with pgcrypto"
+    ],
+    "tools": [
+      "Supabase SQL Editor or psql"
+    ]
   },
-  "requires_primitives": ["rls"],
-  "tags": ["evals", "quality", "audit", "append-only", "calibration", "qa"],
+  "requires_primitives": [
+    "rls"
+  ],
+  "tags": [
+    "evals",
+    "quality",
+    "audit",
+    "append-only",
+    "calibration",
+    "qa"
+  ],
   "difficulty": "advanced",
   "estimated_time": "20 minutes",
   "created": "2026-07-30",
-  "updated": "2026-07-30"
+  "updated": "2026-07-31"
 }

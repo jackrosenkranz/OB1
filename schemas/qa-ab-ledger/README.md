@@ -93,7 +93,12 @@ After step 4, nine `PASS` lines confirming that defects are rejected before reve
 
 After step 8, `qa_ab_evidence_status` reports `insufficient_evidence` until an arm has at least 8 seeded audits across at least 3 defect classes. That is the point: the stopping rule is a column rather than a judgment call made by whoever is reading the numbers that afternoon.
 
-`public.thoughts` is untouched. Links to it from `qa_ab_documents` and `qa_ab_runs` are optional and nullable.
+`public.thoughts` is untouched. The links to it from `qa_ab_documents.thought_id` and `qa_ab_runs.report_thought_id` are optional, nullable, and **deliberately not foreign keys**, for two reasons:
+
+- An audit row must outlive the note that describes it. A ledger entry that disappears along with its description is not a ledger entry. `schemas/thought-audit` makes the same deliberate choice for the same reason.
+- `public.thoughts` is not always a base table. On a deployment where it is a view over another schema's table, Postgres rejects a foreign key to it outright (`referenced relation "thoughts" is not a table`). A plain UUID column works whether `thoughts` is a table, a view, or lives elsewhere.
+
+For the same reason, the existence guard checks `pg_class` rather than `information_schema.tables`, which silently counts views as tables.
 
 ## What Each Metric Is Guarding Against
 
@@ -112,6 +117,9 @@ Solution: every assignment for the document needs a corresponding row in `qa_ab_
 
 **Issue: `qa_ab_findings is append-only`**
 Solution: also working as designed. To correct a finding, insert a new one and record the correction in `rationale` on its score row. To change a gate decision, insert a new run for the next revision round. Nothing in this schema supports editing history, because the metrics are only trustworthy if the facts underneath them are immutable.
+
+**Issue: `referenced relation "thoughts" is not a table`**
+Solution: fixed in 1.0.1. If you are running an older copy, your `public.thoughts` is a view over a table in another schema, and the migration was trying to hang a foreign key off it. Pull the current `schema.sql`, in which `thought_id` and `report_thought_id` are plain UUID columns with no reference.
 
 **Issue: `role "service_role" does not exist` when running the migration outside Supabase**
 Solution: the GRANT statements target Supabase's built-in `service_role`. On a plain Postgres instance, create the role first with `CREATE ROLE service_role;` or strip the access-control block at the end of the migration.
