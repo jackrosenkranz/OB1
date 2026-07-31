@@ -27,8 +27,19 @@
 --      All metrics here are views.
 --
 -- All changes are additive. public.thoughts is not altered in any way.
--- Optional links to thoughts(id) are nullable and use ON DELETE SET NULL,
--- so ledger rows outlive the notes that describe them.
+--
+-- Deliberate NON foreign key: thought_id and report_thought_id are plain
+-- UUID columns with no reference to thoughts(id). Two reasons, and the
+-- second was found the hard way on a real deployment:
+--
+--   a) Ledger rows must outlive the notes they point at. An audit record
+--      that vanishes with its description is not an audit record. This
+--      matches the same deliberate choice in schemas/thought-audit.
+--   b) public.thoughts is not always a table. On a deployment where it is
+--      a view over another schema's table, a foreign key to it is simply
+--      rejected by Postgres ("referenced relation is not a table"). A
+--      plain UUID works regardless of whether thoughts is a table, a
+--      view, or lives somewhere else entirely.
 --
 -- Safe to run more than once (fully idempotent).
 -- ============================================================
@@ -36,15 +47,22 @@
 BEGIN;
 
 -- Fail early and legibly if the base Open Brain schema is absent.
+--
+-- Checked against pg_class rather than information_schema.tables, which
+-- silently includes views. That distinction matters: an earlier version
+-- of this guard passed on a deployment where public.thoughts was a view,
+-- then failed twenty statements later on a foreign key. A guard that
+-- reports the wrong thing is worse than no guard.
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'thoughts'
+    FROM pg_class c
+    WHERE c.relname = 'thoughts'
+      AND c.relkind IN ('r', 'v', 'm', 'p', 'f')
   ) THEN
     RAISE EXCEPTION
-      'qa-ab-ledger requires public.thoughts. Run docs/01-getting-started.md first.';
+      'qa-ab-ledger requires a thoughts relation. Run docs/01-getting-started.md first.';
   END IF;
 END $$;
 
@@ -130,7 +148,8 @@ CREATE TABLE IF NOT EXISTS public.qa_ab_documents (
   derived_from  UUID REFERENCES public.qa_ab_documents(id),
 
   -- Optional pointer at an Open Brain note describing the artifact.
-  thought_id    UUID REFERENCES public.thoughts(id) ON DELETE SET NULL,
+  -- Deliberately not a foreign key; see the header note.
+  thought_id    UUID,
 
   notes         TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -217,7 +236,8 @@ CREATE TABLE IF NOT EXISTS public.qa_ab_runs (
   context_id          TEXT,
 
   -- Optional pointer at the stored report.
-  report_thought_id   UUID REFERENCES public.thoughts(id) ON DELETE SET NULL,
+  -- Deliberately not a foreign key; see the header note.
+  report_thought_id   UUID,
 
   CONSTRAINT qa_ab_runs_completed_after_start
     CHECK (completed_at >= started_at)
