@@ -235,12 +235,28 @@ CREATE TABLE IF NOT EXISTS public.qa_ab_runs (
   -- this rather than silently averaging it in.
   context_id          TEXT,
 
+  -- Contamination known at the time the run is recorded. A contaminated
+  -- run is kept, scored, and readable, but the metric views do not count
+  -- it as evidence. Contamination discovered LATER goes in
+  -- qa_ab_run_addenda, since this row can never be updated.
+  contaminated         BOOLEAN NOT NULL DEFAULT false,
+  contamination_reason TEXT,
+
+  -- Free-text caveats that belong with the run: cost instrumentation
+  -- limits, dispatch irregularities, anything a reader needs to
+  -- interpret the numbers above.
+  notes                TEXT,
+
   -- Optional pointer at the stored report.
   -- Deliberately not a foreign key; see the header note.
   report_thought_id   UUID,
 
   CONSTRAINT qa_ab_runs_completed_after_start
-    CHECK (completed_at >= started_at)
+    CHECK (completed_at >= started_at),
+
+  -- A bare contamination flag decays into folklore within a month.
+  CONSTRAINT qa_ab_runs_contamination_needs_reason
+    CHECK (NOT contaminated OR contamination_reason IS NOT NULL)
 );
 
 CREATE INDEX IF NOT EXISTS qa_ab_runs_assignment_idx
@@ -271,7 +287,14 @@ CREATE TABLE IF NOT EXISTS public.qa_ab_findings (
   --   MATCH        candidate satisfies the reviewer's prior commitment
   --   MISMATCH     candidate contradicts it
   --   NOT_COVERED  the commitment was silent; judgment only
-  commit_tag   TEXT CHECK (commit_tag IN ('MATCH', 'MISMATCH', 'NOT_COVERED')),
+  --   ABSENT       the commitment expected something and the candidate
+  --                contains nothing at all
+  --
+  -- ABSENT is not a synonym for MISMATCH. "Wrong" and "missing" fail
+  -- differently, and the omission findings a commit-first panel is best at
+  -- surfacing all land here. Collapsing the two loses the distinction.
+  commit_tag   TEXT
+    CHECK (commit_tag IN ('MATCH', 'MISMATCH', 'NOT_COVERED', 'ABSENT')),
 
   summary      TEXT NOT NULL,
   location     TEXT,
@@ -607,7 +630,7 @@ SELECT
 FROM public.qa_ab_findings f
 JOIN public.qa_ab_runs r        ON r.id = f.run_id
 JOIN public.qa_ab_assignments a ON a.id = r.assignment_id
-WHERE f.severity = 'HIGH'
+WHERE f.severity = 'HIGH' AND NOT r.contaminated
 GROUP BY a.arm, f.verified_by;
 
 
@@ -626,13 +649,14 @@ WITH runs AS (
     doc.pool,
     r.wall_clock_seconds,
     r.token_spend,
+    r.contaminated,
     g.decision
   FROM public.qa_ab_runs r
   JOIN public.qa_ab_assignments a       ON a.id = r.assignment_id
   JOIN public.qa_ab_documents doc       ON doc.id = a.document_id
   LEFT JOIN public.qa_ab_gate_decisions g ON g.run_id = r.id
 ),
-contaminated AS (
+shared_context AS (
   SELECT a.document_id, r.context_id
   FROM public.qa_ab_runs r
   JOIN public.qa_ab_assignments a ON a.id = r.assignment_id
@@ -643,6 +667,8 @@ contaminated AS (
 SELECT
   runs.arm,
   COUNT(*)                                                          AS total_runs,
+  COUNT(*) FILTER (WHERE runs.contaminated)                         AS contaminated_runs,
+  COUNT(*) FILTER (WHERE NOT runs.contaminated)                     AS countable_runs,
   COUNT(*) FILTER (WHERE runs.pool = 'known_good')                  AS known_good_runs,
   ROUND(
     COUNT(*) FILTER (
@@ -665,7 +691,7 @@ SELECT
   )                                                                 AS approved_then_failed_rate,
   ROUND(AVG(runs.wall_clock_seconds), 1)                            AS avg_wall_clock_seconds,
   ROUND(AVG(runs.token_spend), 0)                                   AS avg_token_spend,
-  (SELECT COUNT(*) FROM contaminated)                               AS contaminated_documents
+  (SELECT COUNT(*) FROM shared_context)                             AS shared_context_documents
 FROM runs
 GROUP BY runs.arm;
 
@@ -686,6 +712,7 @@ WITH audits AS (
   JOIN public.qa_ab_seed_keys k    ON k.document_id = a.document_id
   JOIN public.qa_ab_seed_reveals rv ON rv.seed_key_id = k.id AND rv.verification_ok
   JOIN public.qa_ab_seeded_defects d ON d.seed_key_id = k.id
+  WHERE NOT r.contaminated
 )
 SELECT
   arm,

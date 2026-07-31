@@ -100,6 +100,23 @@ After step 8, `qa_ab_evidence_status` reports `insufficient_evidence` until an a
 
 For the same reason, the existence guard checks `pg_class` rather than `information_schema.tables`, which silently counts views as tables.
 
+## Contaminated Runs (1.1.0)
+
+A review can be compromised in ways that have nothing to do with the panel: it sees material it should not have, it runs in a directory full of unrelated context, two arms share a session. Those runs still have to be recorded, because the reveal gate requires a run for every assignment, and because discarding inconvenient data is how a ledger stops being evidence.
+
+So `qa_ab_runs` carries `contaminated` and `contamination_reason`, and a `CHECK` forces the reason whenever the flag is set — a bare flag decays into folklore inside a month. `catch_rates`, `verified_by_mix` and `evidence_status` all exclude contaminated runs, so a biased run can never count toward the 8-audit threshold. `calibration` keeps counting them in `contaminated_runs` / `countable_runs`, so they stay visible rather than silently vanishing.
+
+`notes` holds caveats that belong with the numbers: cost instrumentation limits, dispatch irregularities, anything a reader needs in order to interpret the row.
+
+## Known Gaps
+
+Found by operating the ledger rather than designing it. Both are real and neither is fixed:
+
+- **No way to void an assignment.** The reveal gate requires a recorded run for every assignment. If an arm is dispatched wrongly and you decide not to record it, that audit deadlocks — the reveal is refused forever and the other arm's findings can never be scored. There is no event that distinguishes "not run yet" from "deliberately voided, with a reason."
+- **No addendum mechanism for a run.** Provenance discovered after a run is recorded has nowhere to go, because the row can never be updated. Findings, gate decisions and outcomes each got their own table precisely because facts arrive late; a run's own provenance did not.
+
+Both want a small append-only sidecar table. Until then, late-discovered provenance lives outside the ledger, which is the fragility this schema exists to remove.
+
 ## What Each Metric Is Guarding Against
 
 - `qa_ab_catch_rates` splits out `is_fluent_error`, the plausible-but-wrong defect class. A panel that scores how right something *sounds* is predicted to miss exactly this class. If two arms do not separate here, whatever anchoring mechanism one of them claims is not doing its job.
