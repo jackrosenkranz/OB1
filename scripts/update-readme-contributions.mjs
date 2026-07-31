@@ -7,7 +7,10 @@ const README_PATH = new URL("../README.md", import.meta.url);
 const START_MARKER = "<!-- recent-contributions:start -->";
 const END_MARKER = "<!-- recent-contributions:end -->";
 const DEFAULT_REPOSITORY = "NateBJones-Projects/OB1";
-const repository = process.env.GITHUB_REPOSITORY || DEFAULT_REPOSITORY;
+// Deliberately not GITHUB_REPOSITORY: Actions sets that to the repo the workflow
+// runs in, which silently redirects the query to a fork with no merged PRs and
+// produces an empty table. The source repo is a choice, so it gets its own var.
+const repository = process.env.CONTRIBUTIONS_REPOSITORY || DEFAULT_REPOSITORY;
 const [owner, repo] = repository.split("/");
 
 if (!owner || !repo) {
@@ -169,6 +172,12 @@ async function main() {
       target: chooseRepoTarget(pr, files),
       user: pr.user,
     });
+  }
+
+  if (items.length === 0) {
+    throw new Error(
+      `No merged pull requests found for ${repository}. Refusing to overwrite the Recent Contributions section with an empty table.`,
+    );
   }
 
   const readme = fs.readFileSync(README_PATH, "utf8");
