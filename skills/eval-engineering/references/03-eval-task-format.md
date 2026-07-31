@@ -52,6 +52,11 @@ not ready to be an eval yet.
 Run the verifier by hand against one clearly correct result and one plausible
 wrong one. Both must land correctly. Re-run this pair after every rubric edit.
 
+That is the minimum bar for a new task. It proves the rubric is not backwards
+and proves nothing else. Before trusting a suite's numbers, calibrate the judge
+against planted defects it cannot see, per
+[07-judge-calibration.md](07-judge-calibration.md).
+
 ### 3. Watch for the environment giving away the answer
 
 If the fixture hands over the result before the agent reaches the tool it was

@@ -65,6 +65,24 @@ trusted; it is that the space it can act in is small enough to verify.
 5. **Re-close on drift.** A rising revert rate closes the gate automatically;
    do not make that a human decision made under deadline.
 
+## The revision counter
+
+Everything above governs a single run. This governs the sequence of runs on the
+same work, and it is the control most often left out.
+
+Resubmitting until the gate opens raises the pass rate without improving
+anything. Count the rounds per artifact and record the count, because an
+unlogged counter resets the moment somebody opens a fresh session:
+
+- **Round 1 or 2:** normal gate.
+- **Round 3 and beyond:** every verdict that blocked in any prior round must
+  clear via an executed check or a fetched source. A re-read cannot clear it,
+  and neither can a more confident explanation.
+
+Treat a round-3 pass as suspect in proportion to how many rounds preceded it.
+The counter belongs in the same store as the findings; see
+[07-judge-calibration.md](07-judge-calibration.md).
+
 ## The warning worth more than the formula
 
 A codebase that ran hundreds of self-improving iterations came out with a large
