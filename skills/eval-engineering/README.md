@@ -8,6 +8,8 @@ Eval Engineering teaches an AI client to turn real production failures into perm
 
 It is an operating procedure, not a framework. The client mines your traces, proposes evals grounded in what actually failed, builds them with the rubric hidden from the agent under test, and captures each failure to Open Brain so the same thing cannot break twice.
 
+Since 1.1.0 it also calibrates the judge, because an uncalibrated instrument drifts without announcing it. See [Calibration](#calibration-110) below.
+
 ## Supported Clients
 
 - Claude Code
@@ -60,6 +62,17 @@ When installed and invoked correctly, the skill produces:
 - a mapping from each verdict to a structural action on the run: reject the handoff, retry or swap the node, quarantine the branch, block the edge, route to human review, terminate the run
 - an Open Brain record for each failure, so the next mining pass starts from what is already known
 
+## Calibration (1.1.0)
+
+Version 1.0.0 built a judge and trusted it. This version measures whether it stayed trustworthy, using four mechanisms in [`references/07-judge-calibration.md`](references/07-judge-calibration.md):
+
+- **Seeded-error audits** replace the two-case verifier smoke test. Plant 3 to 6 defects across at least 3 classes in a real artifact, seal the key where the judge cannot read it, and score after the run. The plausible-but-wrong class is reported separately, because that is the one a judge scoring plausibility will miss.
+- **A known-good set and its acceptance rate.** A judge that rejects work known to have executed cleanly is over-harsh, which makes its signal weak rather than strong. Catch rate alone will never show this, since a judge that flags everything scores perfectly.
+- **`verified_by` tagging** (`executed`, `source_fetched`, `judgment_only`) as the operational form of faithfulness. The mix among high-severity findings is the drift signal; a rising `judgment_only` share means confident output that nothing outside the judge confirms.
+- **A recorded revision counter.** From round 3 onward, every previously blocking verdict must clear via an executed check or a fetched source. A re-read cannot clear it.
+
+These facts only mean something in aggregate, so the skill points at [`schemas/qa-ab-ledger`](../../schemas/qa-ab-ledger/) as their store: append-only tables with catch rate, the `verified_by` mix, and acceptance rate as derived views, plus a sealed seed key the judge under audit cannot reach.
+
 ## Troubleshooting
 
 **Issue: The client generates a suite of plausible-sounding evals with no connection to anything that happened**
@@ -67,6 +80,9 @@ Solution: It has no traces. Give it a folder of real runs, or the text of a rece
 
 **Issue: Scores climb every week and users complain just as much**
 Solution: The agent is optimizing against the judge's shape rather than being correct. Check the rubric against the "never reward the shape of an answer" list in [`references/02-judge-design.md`](references/02-judge-design.md), and draw a fresh held-out set from recent traces instead of tweaking the rubric.
+
+**Issue: The judge looks excellent and nobody can say what its miss rate is**
+Solution: It has never been scored against a defect it could not see. Run a seeded audit per [`references/07-judge-calibration.md`](references/07-judge-calibration.md). Expect the fluent-but-wrong class to score worse than the mechanical ones; if it does not, check whether the key leaked.
 
 **Issue: Every eval passes, including ones that should be impossible**
 Solution: The environment is leaking the answer. Run a deliberately broken agent against the task — if it passes, the fixture is handing over the result before the agent reaches the tool it was supposed to call. See [`references/03-eval-task-format.md`](references/03-eval-task-format.md).

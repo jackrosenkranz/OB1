@@ -79,13 +79,31 @@ Before the verifier grades anything real, hand it two results by hand:
 If either goes the wrong way, the rubric is broken, not the agent. Fix it
 before the first real run, and re-run this pair every time the rubric changes.
 
+This is a smoke test, not a measurement. It catches a rubric that is backwards
+and nothing subtler. Once the judge is running on real work, replace it with
+the seeded-error audit in
+[07-judge-calibration.md](07-judge-calibration.md), which measures the judge's
+miss rate against defects it never sees.
+
+## Rule 7 — Never let a judgment stand alone at the top
+
+Tag every finding with how it was established: `executed`, `source_fetched`, or
+`judgment_only`. A `judgment_only` finding can raise a high-severity item but
+cannot close one, and cannot be the sole basis for blocking.
+
+The share of high-severity findings closed by something other than judgment is
+the drift metric that matters. See
+[07-judge-calibration.md](07-judge-calibration.md).
+
 ## Drift watch
 
 Optimize against a judge long enough and the agent learns to look right rather
-than be right. Two signals that this is happening:
+than be right. Three signals that this is happening:
 
 - scores climb while user complaints hold steady or rise
 - the agent's outputs converge on a recognizable house style
+- the `judgment_only` share of high-severity findings rises
 
-Both call for a fresh held-out set drawn from recent traces, not for a rubric
-tweak.
+The first two call for a fresh held-out set drawn from recent traces, not a
+rubric tweak. The third means the judge has lost its grounding and needs
+executable anchors restored before its scores mean anything again.

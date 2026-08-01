@@ -10,6 +10,11 @@ For any agent that calls tools:
 1. **Faithfulness** — is the answer grounded in what the tools actually
    returned. This is the one that sat at 32.3% while every other number on the
    dashboard looked fine.
+
+   Measure it by tagging, not by asking a model to rate its own groundedness.
+   Every claim is `executed`, `source_fetched`, or `judgment_only`, and
+   faithfulness is the share that is not the third. See
+   [07-judge-calibration.md](07-judge-calibration.md).
 2. **Tool parameter accuracy** — right tool, right arguments.
 3. **Response quality** — is the output coherent and useful to the person who
    asked.

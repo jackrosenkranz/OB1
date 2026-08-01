@@ -11,7 +11,7 @@ description: |
   itself", or any request where the missing layer is the one that decides
   whether an answer was correct and then does something with the verdict.
 author: Jack Rosenkranz
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Eval Engineering
@@ -117,7 +117,28 @@ Never reward the shape of an answer. Pin the judge version and log it — an
 examiner that silently upgrades makes a month of scores unreadable after the
 fact, and nobody notices until they try to compare.
 
-### Step 6 — Wire the verdict into the next edge
+### Step 6 — Calibrate the judge against defects it cannot see
+
+Read [references/07-judge-calibration.md](references/07-judge-calibration.md).
+
+Step 4's two-case check proves the rubric is not backwards. It measures
+nothing. Before anyone acts on a score, the judge needs four things it does not
+get by default:
+
+- a **seeded-error audit**: 3 to 6 defects planted in a real artifact across at
+  least 3 classes, the key sealed away, the fluent-but-wrong class reported on
+  its own
+- a **known-good set** and its acceptance rate, so an over-harsh judge cannot
+  pass for a rigorous one
+- **`verified_by` tagging** on every finding, so faithfulness is a mix you can
+  watch rather than a number a model assigns itself
+- a **recorded revision counter**, so resubmitting until the gate opens stops
+  being a way through
+
+A judge that has never been scored against a planted defect is a judge whose
+miss rate nobody knows.
+
+### Step 7 — Wire the verdict into the next edge
 
 Read [references/04-verdict-routing.md](references/04-verdict-routing.md).
 
@@ -135,7 +156,7 @@ Every verdict maps to a structural action on the run in progress:
 If the user's design has no path from a verdict back into execution, name that
 as the gap before discussing anything else.
 
-### Step 7 — Capture the failure permanently
+### Step 8 — Capture the failure permanently
 
 Write the finding back to Open Brain (usually `capture_thought`): the failing
 behavior, the attribution, the eval that now guards it, and the rubric line.
@@ -143,7 +164,15 @@ This is the compounding part. The model is a rental and will be replaced twice
 this year; the examiner and the failure log are yours and get more valuable
 every week.
 
-### Step 8 — Only then, autonomy
+For the calibration facts from Step 6 — seeded audits, findings and their
+`verified_by` tags, revision counts, known-good acceptance, execution outcomes —
+prefer the append-only tables in
+[`schemas/qa-ab-ledger`](../../schemas/qa-ab-ledger/) over prose captures. Those
+numbers only mean anything in aggregate, and that schema derives catch rate and
+the `verified_by` mix as views so they cannot drift from the audits underneath
+them. It also seals the seed key so the judge under audit cannot read it.
+
+### Step 9 — Only then, autonomy
 
 If and only if the user asks about autonomous merge or unattended runs, read
 [references/04-verdict-routing.md](references/04-verdict-routing.md) for the
@@ -179,6 +208,15 @@ first number.
 - **Optimize against a judge long enough and the agent learns to look right
   rather than be right.** Rotate held-out cases and re-check the rubric when
   scores climb without complaints falling.
+- **A high catch rate proves nothing on its own.** A judge that rejects
+  everything scores perfectly. Report acceptance rate on known-good work
+  beside it, always, or harshness will read as rigour.
+- **Round 3 is not round 1.** When work has been resubmitted twice, every
+  previously blocking verdict must clear via an executed check or a fetched
+  source. A re-read cannot clear it.
+- **A `judgment_only` finding cannot close a high-severity item.** It can raise
+  one. Watch the `judgment_only` share over time; when it rises, the judge is
+  producing confident output that nothing outside it confirms.
 - **No credentials in eval fixtures.** Use environment variables and redact
   trace payloads before they are stored or committed.
 - **Redact before capture.** Production traces carry customer data; strip it
@@ -199,6 +237,8 @@ For an audit of an existing setup, return findings first, ordered by leverage:
 
 - metrics that measure shape rather than substance
 - judges sharing a family with the generator, or unpinned
+- judges never scored against a planted defect, so their miss rate is unknown
+- a catch rate reported without an acceptance rate beside it
 - verdicts with no path back into execution
 - coverage gaps against the five starter evals
 - a prioritized fix sequence with the check that confirms each fix
@@ -209,5 +249,8 @@ For an audit of an existing setup, return findings first, ordered by leverage:
 - Does the path get measured, not just the final answer?
 - Does each verdict change something structural about the run?
 - Was the verifier tested against one passing and one plausible wrong result?
+- Has the judge been scored against planted defects it could not see, with the
+  fluent-but-wrong class reported on its own?
+- Is a known-good acceptance rate reported next to every catch rate?
 - Is the judge from a different family, pinned, and version-logged?
 - Did the failure get captured so it cannot break the same thing twice?

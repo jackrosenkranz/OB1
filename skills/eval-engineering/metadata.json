@@ -6,7 +6,7 @@
     "name": "Jack Rosenkranz",
     "github": "jackrosenkranz"
   },
-  "version": "1.0.0",
+  "version": "1.1.0",
   "requires": {
     "open_brain": true,
     "services": [],
@@ -16,9 +16,9 @@
       "Ability to install the bundled references directory"
     ]
   },
-  "tags": ["evals", "agents", "llm-as-judge", "observability", "quality", "workflow", "automation"],
+  "tags": ["evals", "agents", "llm-as-judge", "observability", "quality", "workflow", "automation", "calibration"],
   "difficulty": "advanced",
   "estimated_time": "20 minutes",
   "created": "2026-07-30",
-  "updated": "2026-07-30"
+  "updated": "2026-07-31"
 }
