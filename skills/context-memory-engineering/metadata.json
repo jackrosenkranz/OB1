@@ -1,0 +1,23 @@
+{
+  "name": "Context and Memory Engineering Skill Pack",
+  "description": "Gives an Open Brain-backed agent system explicit rules for what gets written to memory (write gates, provenance, supersession), what gets retrieved (exact-before-semantic, filters, token budgets), and where retrieved material lands in the prompt (placement, compression on arrival).",
+  "category": "skills",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": [],
+    "tools": [
+      "AI client with reusable skills/prompts",
+      "An agent workflow that captures to and retrieves from Open Brain"
+    ]
+  },
+  "tags": ["context-engineering", "memory", "retrieval", "agents", "write-policy", "prompt-placement", "maintenance", "workflow"],
+  "difficulty": "intermediate",
+  "estimated_time": "15 minutes",
+  "created": "2026-08-05",
+  "updated": "2026-08-05"
+}
