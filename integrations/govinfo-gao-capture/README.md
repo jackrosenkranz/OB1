@@ -1,0 +1,154 @@
+# GovInfo GAO Report Capture
+
+Pulls GAO reports from the GovInfo API into your Open Brain on a schedule.
+
+## What It Does
+
+GAO publishes oversight reports that matter for elder law practice — Medicaid
+program integrity, nursing home oversight, long-term care financing, VA
+benefits administration. This integration watches the GovInfo `GAOREPORTS`
+collection, filters to the topics you care about, and stores each new or
+revised report as a thought with `source_type='govinfo_gao'`.
+
+It runs on a schedule rather than a webhook, because GovInfo has no push
+mechanism. Each run drains a bounded batch and advances a watermark, so a
+large backlog spreads across ticks instead of timing out.
+
+### Why GovInfo instead of scraping gao.gov
+
+GPO publishes GAO's reports as an official collection with a documented API,
+a stable package ID per report, and direct PDF and text links. Scraping
+gao.gov gets you the same documents by fighting an Akamai edge that returns
+403 to datacenter traffic — more fragile, slower, and against the grain of a
+site that already gives the data away cleanly.
+
+## Prerequisites
+
+- A working Open Brain instance (`thoughts` table with pgvector)
+- The `enhanced-thoughts` schema (provides `source_type` and its index)
+- A free GovInfo API key: https://www.govinfo.gov/api-signup
+- An OpenRouter key for embeddings
+- Supabase CLI
+
+## Cost
+
+- **GovInfo API:** free. Default limits are 36,000 requests/hour, far above
+  what a daily pull uses.
+- **Embeddings:** one `text-embedding-3-small` call per new report, on title
+  plus abstract only. At typical GAO publication volume with a topic filter,
+  this is cents per month.
+
+The initial backfill is the only meaningful cost, and it is bounded by how
+far back you set `last_modified_mark` in the schema file.
+
+## Credential Tracker
+
+| Secret | Where it comes from |
+|---|---|
+| `GOVINFO_API_KEY` | govinfo.gov/api-signup |
+| `OPENROUTER_API_KEY` | openrouter.ai keys page |
+| `GOVINFO_SYNC_SECRET` | You generate it; gates the function |
+
+## Step 1: Apply the Schema
+
+```bash
+psql "$DATABASE_URL" -f schemas/govinfo-sync-state/schema.sql
+```
+
+This creates `govinfo_sync_state`, seeds the `gaoreports` cursor, and adds
+the dedup index on `metadata->>'govinfo_package_id'`.
+
+To backfill further than the default, edit `last_modified_mark` in that file
+*before* running it, or update the row directly afterward.
+
+## Step 2: Deploy the Function
+
+```bash
+supabase functions new govinfo-gao-capture
+cp integrations/govinfo-gao-capture/index.ts \
+   supabase/functions/govinfo-gao-capture/index.ts
+
+supabase secrets set GOVINFO_API_KEY=your-key
+supabase secrets set OPENROUTER_API_KEY=your-key
+supabase secrets set GOVINFO_SYNC_SECRET="$(openssl rand -hex 32)"
+
+supabase functions deploy govinfo-gao-capture
+```
+
+## Step 3: Schedule It
+
+Daily is plenty — GAO publishes a handful of reports a day at most.
+
+```sql
+select cron.schedule(
+  'govinfo-gao-capture',
+  '0 6 * * *',
+  $$
+  select net.http_post(
+    url     := 'https://YOUR-PROJECT.supabase.co/functions/v1/govinfo-gao-capture',
+    headers := jsonb_build_object(
+      'Content-Type',   'application/json',
+      'x-sync-secret',  'YOUR_GOVINFO_SYNC_SECRET'
+    )
+  );
+  $$
+);
+```
+
+## Step 4: Test It
+
+```bash
+curl -X POST https://YOUR-PROJECT.supabase.co/functions/v1/govinfo-gao-capture \
+  -H "x-sync-secret: YOUR_GOVINFO_SYNC_SECRET"
+```
+
+Expected response:
+
+```json
+{"status":"ok","examined":25,"skipped_duplicates":0,"ingested":25,"more":true}
+```
+
+`"more": true` means the batch filled and there is a backlog. Either wait for
+the next cron tick or call it again to keep draining.
+
+## Tuning the Topic Filter
+
+`TOPIC_TERMS` at the top of `index.ts` is the server-side filter. It ships
+with an elder-law list. Widen or narrow it to match your practice — every
+term you add increases how many reports get embedded and stored.
+
+## Troubleshooting
+
+### `Sync state missing`
+
+Step 1 didn't run, or ran against a different database. Confirm with
+`select * from govinfo_sync_state;`.
+
+### `no recognized results array` in the logs
+
+GovInfo's `/search` response nests results under a key that has shifted
+between API revisions. The function logs the actual top-level keys it got —
+add that key to the list in `extractResults()`.
+
+### Nothing ingested, `examined` is 0
+
+The watermark has caught up. Check `last_modified_mark`; if it is in the
+future or too recent, reset it:
+
+```sql
+update govinfo_sync_state
+   set last_modified_mark = '2024-01-01T00:00:00Z', offset_mark = null
+ where sync_key = 'gaoreports';
+```
+
+### Rate limit errors
+
+The shared `DEMO_KEY` is heavily throttled. Make sure `GOVINFO_API_KEY` is
+your own key from the signup page.
+
+## What You Just Built
+
+A standing research feed. GAO's oversight work on Medicaid, long-term care,
+and veterans benefits lands in your brain as it publishes, semantically
+searchable alongside everything else, with citations and full-text links
+intact.

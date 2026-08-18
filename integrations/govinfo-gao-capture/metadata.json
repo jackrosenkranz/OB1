@@ -1,0 +1,20 @@
+{
+  "name": "GovInfo GAO Report Capture",
+  "description": "Pull GAO reports from the GovInfo API (GAOREPORTS collection) on a schedule and store them as thoughts. Filters server-side to the topics you track, embeds title and abstract, and keeps full-text links in metadata. Resumable via a watermark table.",
+  "category": "integrations",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": ["GovInfo API", "OpenRouter"],
+    "tools": ["Supabase CLI"]
+  },
+  "tags": ["govinfo", "gao", "capture", "research", "scheduled", "government"],
+  "difficulty": "intermediate",
+  "estimated_time": "30 minutes",
+  "created": "2026-08-18",
+  "updated": "2026-08-18"
+}

@@ -1,0 +1,20 @@
+{
+  "name": "GovInfo Sync State",
+  "description": "Watermark table for resumable scheduled pulls from the GovInfo API. Tracks lastModified position, pagination cursor, and run health per collection.",
+  "category": "schemas",
+  "author": {
+    "name": "Jack Rosenkranz",
+    "github": "jackrosenkranz"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": [],
+    "tools": ["Supabase CLI"]
+  },
+  "tags": ["govinfo", "gao", "sync", "watermark", "scheduled"],
+  "difficulty": "beginner",
+  "estimated_time": "5 minutes",
+  "created": "2026-08-18",
+  "updated": "2026-08-18"
+}
