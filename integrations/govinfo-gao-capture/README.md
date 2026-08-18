@@ -145,9 +145,20 @@ carries it.
 
 ## Tuning the Topic Filter
 
-`TOPIC_TERMS` at the top of `index.ts` is the server-side filter. It ships
-with an elder-law list. Widen or narrow it to match your practice — every
-term you add increases how many reports get embedded and stored.
+`TOPIC_TERMS` at the top of `index.ts` is the server-side filter. It is not a
+guess: it was derived by reviewing all 190 Implementation Factory items against
+what GAO actually publishes. See `references/item-relevance.md` for the full
+mapping and the reasoning behind each tier.
+
+The query is scoped to **titles**, not full text. Searching full text matched a
+highway congestion report on an elder-law query, because "medicare" appears
+once in plenty of reports that are not about Medicare. GAO titles are strongly
+topical, so title-scoping trades a little recall for a large gain in precision.
+
+As verified against the live API, the shipped terms match **658 GAO reports** —
+a targeted corpus, not a broad slice of GAO's ~28k catalog. Widen or narrow the
+list to match your practice; every term you add increases how many reports get
+embedded and stored.
 
 ## Troubleshooting
 

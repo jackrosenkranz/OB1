@@ -18,18 +18,45 @@
 const apiKey = requiredEnv("GOVINFO_API_KEY");
 const GOVINFO_BASE = "https://api.govinfo.gov";
 
-// Kept in sync with index.ts. If you tune TOPIC_TERMS there, mirror it here
-// so this script exercises the query you actually ship.
+// Mirrors TOPIC_TERMS in index.ts — keep the two in sync. Derived from a review of all 190 Implementation Factory
+// items — see references/item-relevance.md. 91 of those items sit on federal
+// programs GAO audits recurringly; these terms cover them. The other 99 are
+// Florida law, county programs, or firm process, which GAO does not audit.
 const TOPIC_TERMS = [
+  // Medicaid — on GAO's High-Risk List, so coverage is continuous
   "medicaid",
-  "medicare",
   "long-term care",
-  "nursing home",
-  "elder abuse",
-  "guardianship",
   "home and community-based services",
+  "nursing home",
+  "spousal impoverishment",
+  "managed care",
+  // Medicare
+  "medicare",
+  "medicare advantage",
+  "dual eligible",
+  "hospice",
+  "skilled nursing",
+  // VA and TRICARE — VA health care is also on the High-Risk List
+  "veterans health care",
   "veterans benefits",
+  "aid and attendance",
+  "disability compensation",
+  "caregiver program",
+  "tricare",
+  "pact act",
+  // Social Security
   "social security disability",
+  "supplemental security income",
+  "ticket to work",
+  "vocational rehabilitation",
+  // Everything else GAO covers that maps to a Tier 1 item
+  "elder abuse",
+  "elder financial exploitation",
+  "guardianship",
+  "reverse mortgage",
+  "able account",
+  "assisted living",
+  "continuing care retirement",
 ];
 
 // The variants index.ts probes, in order.
@@ -81,7 +108,7 @@ async function probeSearch() {
   const payload = await request("/search", {
     method: "POST",
     body: {
-      query: `collection:(GAOREPORTS) AND (${topics})`,
+      query: `collection:(GAOREPORTS) AND title:(${topics})`,
       pageSize: 5,
       offsetMark: "*",
       sorts: [{ field: "lastModified", sortOrder: "ASC" }],
@@ -149,9 +176,13 @@ async function probeSearch() {
   // title is not a bug. But if NONE of the sampled titles relate to any topic
   // term, the query is probably not constraining the way index.ts assumes,
   // and the function would embed (and bill for) a broad slice of GAO output.
+  // Normalize possessives and punctuation before matching: GAO writes
+  // "Veterans' Benefits", which a plain substring test would score as a miss
+  // against the term "veterans benefits".
+  const normalize = (t) => t.toLowerCase().replace(/['\u2019]/g, "").replace(/\s+/g, " ");
   const titles = results.map((r) => r.title ?? "");
   const onTopic = titles.filter((t) =>
-    TOPIC_TERMS.some((term) => t.toLowerCase().includes(term.toLowerCase()))
+    TOPIC_TERMS.some((term) => normalize(t).includes(normalize(term)))
   );
   findings.search.total_matching_count = payload.count ?? null;
   findings.search.titles_matching_a_topic_term = `${onTopic.length}/${titles.length}`;
@@ -161,8 +192,9 @@ async function probeSearch() {
     findings.problems.push(
       "None of the sampled titles contain any TOPIC_TERM. Review sample_titles " +
         "below: if they are unrelated to your practice areas, the query is not " +
-        "filtering and you would ingest a broad slice of GAO output. Tighten " +
-        "buildQuery() (try title:(...) instead of a bare term list) before deploying.",
+        "filtering and you would ingest a broad slice of GAO output. The query " +
+        "is already title-scoped; if that is still matching loosely, confirm " +
+        "GovInfo supports title:() on this collection before deploying.",
     );
   }
 
@@ -192,10 +224,15 @@ async function probeSummary(packageId) {
   // index.ts derives the citable report number from packageId rather than
   // from any summary field, because no summary field carries it.
   findings.summary.gao_report_number_derived = packageId.replace(/^GAOREPORTS-/, "");
-  if (!findings.summary.gao_report_number_derived.startsWith("GAO-")) {
+  // Do NOT require a "GAO-" prefix here. Reports published before ~2004 carry
+  // their issuing division's designator instead — HEHS-00-20 (Health,
+  // Education and Human Services), HRD-93-105 (Human Resources) — and those
+  // ARE the citable numbers. Stripping the collection prefix is correct for
+  // both eras; only a missing prefix would be a real failure.
+  if (!packageId.startsWith("GAOREPORTS-") || !findings.summary.gao_report_number_derived) {
     findings.problems.push(
-      `packageId "${packageId}" does not follow the GAOREPORTS-<report number> ` +
-        "pattern that ingest() relies on; metadata.gao_report_number will be wrong.",
+      `packageId "${packageId}" is not of the form GAOREPORTS-<report number>; ` +
+        "metadata.gao_report_number would be wrong.",
     );
   }
 

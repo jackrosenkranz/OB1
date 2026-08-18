@@ -43,17 +43,45 @@ const BATCH_SIZE = 25;
 const MAX_EMBED_CHARS = 8000;
 
 // Applied server-side by GovInfo so we don't pull (or pay to embed) all
-// ~28k GAO reports. Tune this list to the practice areas you actually track.
+// ~28k GAO reports. Derived from a review of all 190 Implementation Factory
+// items — see references/item-relevance.md. 91 of those items sit on federal
+// programs GAO audits recurringly; these terms cover them. The other 99 are
+// Florida law, county programs, or firm process, which GAO does not audit.
 const TOPIC_TERMS = [
+  // Medicaid — on GAO's High-Risk List, so coverage is continuous
   "medicaid",
-  "medicare",
   "long-term care",
-  "nursing home",
-  "elder abuse",
-  "guardianship",
   "home and community-based services",
+  "nursing home",
+  "spousal impoverishment",
+  "managed care",
+  // Medicare
+  "medicare",
+  "medicare advantage",
+  "dual eligible",
+  "hospice",
+  "skilled nursing",
+  // VA and TRICARE — VA health care is also on the High-Risk List
+  "veterans health care",
   "veterans benefits",
+  "aid and attendance",
+  "disability compensation",
+  "caregiver program",
+  "tricare",
+  "pact act",
+  // Social Security
   "social security disability",
+  "supplemental security income",
+  "ticket to work",
+  "vocational rehabilitation",
+  // Everything else GAO covers that maps to a Tier 1 item
+  "elder abuse",
+  "elder financial exploitation",
+  "guardianship",
+  "reverse mortgage",
+  "able account",
+  "assisted living",
+  "continuing care retirement",
 ];
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -76,7 +104,13 @@ interface GovInfoResult {
 
 function buildQuery(): string {
   const topics = TOPIC_TERMS.map((t) => (t.includes(" ") ? `"${t}"` : t)).join(" OR ");
-  return `collection:(GAOREPORTS) AND (${topics})`;
+  // Scoped to title, not full text. A bare term list matched a highway
+  // congestion report on the first smoke run: GovInfo searches whole
+  // documents, and "medicare" appears once in plenty of reports that are not
+  // about Medicare. GAO titles are strongly topical ("Medicaid: CMS Should
+  // Improve...", "VA Health Care: ..."), so scoping to title trades a little
+  // recall for a large gain in precision — and in embedding spend.
+  return `collection:(GAOREPORTS) AND title:(${topics})`;
 }
 
 // GovInfo's /search response nests results under a key that has moved
