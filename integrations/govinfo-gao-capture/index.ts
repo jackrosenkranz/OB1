@@ -1,8 +1,8 @@
 // govinfo-gao-capture / index.ts
 //
 // Supabase Edge Function that pulls GAO reports from the GovInfo API
-// (GAOREPORTS collection) and stores them as thoughts with
-// source_type='govinfo_gao'.
+// (GAOREPORTS collection) and stores them as thoughts tagged
+// metadata.source='govinfo'.
 //
 // Pull, not webhook: GovInfo has no push mechanism, so this runs on a
 // schedule (pg_cron + pg_net). Each invocation drains a bounded batch and
@@ -12,6 +12,12 @@
 // Why GovInfo and not gao.gov: GPO publishes GAO's reports as an official
 // collection with a documented API. Scraping gao.gov directly means fighting
 // an Akamai edge that 403s datacenter traffic, for the same documents.
+//
+// Schema note: source and type go INSIDE metadata, not in top-level columns.
+// The enhanced-thoughts schema adds source_type/type columns, but not every
+// Open Brain instance has applied it — and the ones that have still read those
+// values out of metadata in provenance-chains. Writing to metadata works on
+// both shapes; writing to columns works on only one.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -217,13 +223,13 @@ async function getEmbedding(text: string): Promise<number[]> {
   return d.data[0].embedding;
 }
 
-// One query for the whole batch rather than one per package. Filters on
-// source_type first so it uses idx_thoughts_source_type.
+// One query for the whole batch rather than one per package. The package-id
+// filter is served by idx_thoughts_govinfo_package_id.
 async function findAlreadyIngested(packageIds: string[]): Promise<Set<string>> {
   const { data, error } = await supabase
     .from("thoughts")
     .select("metadata->>govinfo_package_id")
-    .eq("source_type", "govinfo_gao")
+    .eq("metadata->>source", "govinfo")
     .in("metadata->>govinfo_package_id", packageIds);
 
   if (error) {
@@ -248,10 +254,12 @@ async function ingest(result: GovInfoResult): Promise<boolean> {
   const { error } = await supabase.from("thoughts").insert({
     content,
     embedding,
-    source_type: "govinfo_gao",
-    type: "reference",
     metadata: {
+      // Matches the house convention in the thoughts table: metadata.source
+      // identifies the capture pipeline, metadata.type classifies the thought.
       source: "govinfo",
+      type: "reference",
+      source_type: "govinfo_gao",
       govinfo_package_id: result.packageId,
       collection: "GAOREPORTS",
       title,

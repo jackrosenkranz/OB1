@@ -34,6 +34,11 @@ ON CONFLICT (sync_key) DO NOTHING;
 
 -- Dedup support: the function looks up already-ingested packages by
 -- metadata->>'govinfo_package_id' before embedding anything.
+--
+-- Indexed on ai_brain.thoughts, the base table. On instances where
+-- public.thoughts is a view over it, indexing the view is not possible; on
+-- instances where thoughts lives directly in public, change the schema
+-- qualifier here to match.
 CREATE INDEX IF NOT EXISTS idx_thoughts_govinfo_package_id
-  ON public.thoughts ((metadata->>'govinfo_package_id'))
+  ON ai_brain.thoughts ((metadata->>'govinfo_package_id'))
   WHERE metadata ? 'govinfo_package_id';
