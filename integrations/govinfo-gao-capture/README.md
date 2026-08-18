@@ -22,6 +22,23 @@ gao.gov gets you the same documents by fighting an Akamai edge that returns
 403 to datacenter traffic — more fragile, slower, and against the grain of a
 site that already gives the data away cleanly.
 
+## Verify Before You Deploy
+
+GPO documents the `/search` response shape only loosely, so run the shape
+verifier against your own key first:
+
+```bash
+GOVINFO_API_KEY=your-key node integrations/govinfo-gao-capture/smoke/verify-govinfo-shape.mjs
+```
+
+Exit 0 means every field `index.ts` reads is present and the report text link
+resolves to real prose. Exit 1 prints exactly what to change and where.
+
+Pay attention to `titles_matching_a_topic_term` in the output. GovInfo searches
+full text, so an unrelated-looking title is not automatically wrong — but if
+none of the sampled titles relate to your topics, tighten `buildQuery()` before
+deploying or you will embed a broad slice of GAO's catalog.
+
 ## Prerequisites
 
 - A working Open Brain instance (`thoughts` table with pgvector)
@@ -34,9 +51,9 @@ site that already gives the data away cleanly.
 
 - **GovInfo API:** free. Default limits are 36,000 requests/hour, far above
   what a daily pull uses.
-- **Embeddings:** one `text-embedding-3-small` call per new report, on title
-  plus abstract only. At typical GAO publication volume with a topic filter,
-  this is cents per month.
+- **Embeddings:** one `text-embedding-3-small` call per new report, on the
+  title plus the first 8,000 characters of the report. At typical GAO
+  publication volume with a topic filter, this is cents per month.
 
 The initial backfill is the only meaningful cost, and it is bounded by how
 far back you set `last_modified_mark` in the schema file.
@@ -111,6 +128,21 @@ Expected response:
 `"more": true` means the batch filled and there is a backlog. Either wait for
 the next cron tick or call it again to keep draining.
 
+## What Gets Embedded
+
+The `/packages/{id}/summary` response carries no abstract for GAO packages —
+the shape verifier caught this against the live API. So the function fetches
+`download.txtLink`, strips the HTML, and embeds the title plus the opening
+8,000 characters. For GAO reports that opening is the Highlights page: why GAO
+did the study, what it found, what it recommends.
+
+Full text stays behind `metadata.text_link`, and `metadata.text_truncated`
+flags reports whose body ran past the embedding window.
+
+The citable report number (`GAO-05-943`) is derived from the GovInfo
+`packageId`, which is reliably `GAOREPORTS-<report number>`. No summary field
+carries it.
+
 ## Tuning the Topic Filter
 
 `TOPIC_TERMS` at the top of `index.ts` is the server-side filter. It ships
@@ -127,8 +159,16 @@ Step 1 didn't run, or ran against a different database. Confirm with
 ### `no recognized results array` in the logs
 
 GovInfo's `/search` response nests results under a key that has shifted
-between API revisions. The function logs the actual top-level keys it got —
-add that key to the list in `extractResults()`.
+between API revisions. As of last verification it is `results`, with the
+pagination cursor in `offsetMark`. If that changes, the function logs the
+actual top-level keys it got — add the new key to `extractResults()`. Running
+the shape verifier will tell you the same thing before it reaches production.
+
+### Thoughts arrive with title only, no body
+
+`download.txtLink` was unreachable for those packages, so `ingest()` fell back
+to the title. Check the function logs for `GovInfo text fetch failed`. Run the
+shape verifier to confirm the link resolves for a known-good package.
 
 ### Nothing ingested, `examined` is 0
 

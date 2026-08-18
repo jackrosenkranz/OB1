@@ -31,9 +31,15 @@ const SYNC_KEY = "gaoreports";
 const BATCH_SIZE = 25;
 
 // text-embedding-3-small tops out at 8191 tokens. GAO reports run 60+ pages,
-// so we embed title + abstract and keep the full-text link in metadata for
-// retrieval. Embedding the whole PDF would truncate arbitrarily and bury the
-// summary that makes the report findable in the first place.
+// so we embed the title plus the opening of the report text and keep the
+// full-text link in metadata for retrieval. Embedding the whole document
+// would truncate arbitrarily somewhere in the middle of the findings.
+//
+// The /packages/{id}/summary response carries NO abstract field (verified
+// against the live API by smoke/verify-govinfo-shape.mjs), so the opening of
+// the text is the closest thing to a usable summary. For GAO reports that is
+// the Highlights page: why GAO did the study, what it found, what it
+// recommends.
 const MAX_EMBED_CHARS = 8000;
 
 // Applied server-side by GovInfo so we don't pull (or pay to embed) all
@@ -133,6 +139,34 @@ async function fetchSummary(packageId: string): Promise<Record<string, any> | nu
   return await res.json();
 }
 
+// The summary endpoint has no abstract, so the opening of the report text is
+// what we embed. Returns null rather than throwing: a report with an
+// unreachable text link is still worth storing on its title and metadata.
+async function fetchReportText(txtLink: string | null): Promise<string | null> {
+  if (!txtLink) return null;
+
+  const sep = txtLink.includes("?") ? "&" : "?";
+  const res = await fetch(`${txtLink}${sep}api_key=${GOVINFO_API_KEY}`);
+  if (!res.ok) {
+    console.error(`GovInfo text fetch failed: ${res.status}`);
+    return null;
+  }
+
+  // GovInfo serves these as HTML for most GAO packages. Strip tags and
+  // collapse whitespace so the embedding sees prose, not markup.
+  const raw = await res.text();
+  const text = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length > 0 ? text.slice(0, MAX_EMBED_CHARS) : null;
+}
+
 async function getEmbedding(text: string): Promise<number[]> {
   const r = await fetch(`${OPENROUTER_BASE}/embeddings`, {
     method: "POST",
@@ -171,8 +205,9 @@ async function ingest(result: GovInfoResult): Promise<boolean> {
   if (!summary) return false;
 
   const title = summary.title ?? result.title ?? result.packageId;
-  const abstract = summary.summary ?? summary.abstract ?? "";
-  const content = abstract ? `${title}\n\n${abstract}` : title;
+  const txtLink = summary.download?.txtLink ?? null;
+  const body = await fetchReportText(txtLink);
+  const content = body ? `${title}\n\n${body}` : title;
 
   const embedding = await getEmbedding(content);
 
@@ -186,16 +221,18 @@ async function ingest(result: GovInfoResult): Promise<boolean> {
       govinfo_package_id: result.packageId,
       collection: "GAOREPORTS",
       title,
-      // GAO's own report number (GAO-24-106356), which is how these get
-      // cited in practice — the GovInfo packageId is not.
-      gao_report_number: summary.governmentAuthor2 ?? summary.gaoReportNumber ?? null,
+      // GAO's own report number (GAO-24-106356), which is how these get cited
+      // in practice — the GovInfo packageId is not. The summary response has
+      // no dedicated field for it, but packageId is reliably
+      // "GAOREPORTS-<report number>", so derive it rather than guess a field.
+      gao_report_number: result.packageId.replace(/^GAOREPORTS-/, ""),
       date_issued: summary.dateIssued ?? result.dateIssued ?? null,
       last_modified: result.lastModified ?? null,
       govinfo_url: result.resultLink ?? null,
       pdf_link: summary.download?.pdfLink ?? null,
-      // Full text lives behind this link rather than in `content`; the
-      // embedding covers title + abstract only.
-      text_link: summary.download?.txtLink ?? null,
+      // Full text lives behind this link; `content` holds only its opening.
+      text_link: txtLink,
+      text_truncated: body != null && body.length >= MAX_EMBED_CHARS,
       branch: summary.branch ?? null,
     },
   });
